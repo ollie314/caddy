@@ -3,9 +3,8 @@
 package rewrite
 
 import (
-	"net/http"
-
 	"fmt"
+	"net/http"
 	"net/url"
 	"path"
 	"path/filepath"
@@ -50,6 +49,9 @@ func NewSimpleRule(from, to string) SimpleRule {
 // Rewrite rewrites the internal location of the current request.
 func (s SimpleRule) Rewrite(r *http.Request) bool {
 	if s.From == r.URL.Path {
+		// take note of this rewrite for internal use by fastcgi
+		// all we need is the URI, not full URL
+		r.Header.Set(headerFieldName, r.URL.RequestURI())
 		r.URL.Path = s.To
 		return true
 	}
@@ -96,15 +98,6 @@ func NewRegexpRule(base, pattern, to string, ext []string) (*RegexpRule, error) 
 	}, nil
 }
 
-// regexpVars are variables that can be used for To (rewrite destination path).
-var regexpVars = []string{
-	"{path}",
-	"{query}",
-	"{file}",
-	"{dir}",
-	"{frag}",
-}
-
 // Rewrite rewrites the internal location of the current request.
 func (r *RegexpRule) Rewrite(req *http.Request) bool {
 	rPath := req.URL.Path
@@ -119,38 +112,29 @@ func (r *RegexpRule) Rewrite(req *http.Request) bool {
 		return false
 	}
 
+	// include trailing slash in regexp if present
+	start := len(r.Base)
+	if strings.HasSuffix(r.Base, "/") {
+		start -= 1
+	}
+
 	// validate regexp
-	if !r.MatchString(rPath[len(r.Base):]) {
+	if !r.MatchString(rPath[start:]) {
 		return false
 	}
 
-	to := r.To
-
-	// check variables
-	for _, v := range regexpVars {
-		if strings.Contains(r.To, v) {
-			switch v {
-			case "{path}":
-				to = strings.Replace(to, v, req.URL.Path[1:], -1)
-			case "{query}":
-				to = strings.Replace(to, v, req.URL.RawQuery, -1)
-			case "{frag}":
-				to = strings.Replace(to, v, req.URL.Fragment, -1)
-			case "{file}":
-				_, file := path.Split(req.URL.Path)
-				to = strings.Replace(to, v, file, -1)
-			case "{dir}":
-				dir, _ := path.Split(req.URL.Path)
-				to = path.Clean(strings.Replace(to, v, dir, -1))
-			}
-		}
-	}
+	// replace variables
+	to := path.Clean(middleware.NewReplacer(req, nil, "").Replace(r.To))
 
 	// validate resulting path
 	url, err := url.Parse(to)
 	if err != nil {
 		return false
 	}
+
+	// take note of this rewrite for internal use by fastcgi
+	// all we need is the URI, not full URL
+	req.Header.Set(headerFieldName, req.URL.RequestURI())
 
 	// perform rewrite
 	req.URL.Path = url.Path
@@ -192,3 +176,8 @@ func (r *RegexpRule) matchExt(rPath string) bool {
 	}
 	return true
 }
+
+// When a rewrite is performed, this header is added to the request
+// and is for internal use only, specifically the fastcgi middleware.
+// It contains the original request URI before the rewrite.
+const headerFieldName = "Caddy-Rewrite-Original-URI"
