@@ -56,6 +56,9 @@ var newACMEClient = func(config *Config, allowPrompts bool) (*ACMEClient, error)
 		caURL = "https://" + caURL
 	}
 	u, err := url.Parse(caURL)
+	if err != nil {
+		return nil, err
+	}
 	if u.Scheme != "https" && !caddy.IsLoopback(u.Host) && !strings.HasPrefix(u.Host, "10.") {
 		return nil, fmt.Errorf("%s: insecure CA URL (HTTPS required)", caURL)
 	}
@@ -103,17 +106,27 @@ var newACMEClient = func(config *Config, allowPrompts bool) (*ACMEClient, error)
 		// Use HTTP and TLS-SNI challenges by default
 
 		// See if HTTP challenge needs to be proxied
+		useHTTPPort := "" // empty port value will use challenge default
 		if caddy.HasListenerWithAddress(net.JoinHostPort(config.ListenHost, HTTPChallengePort)) {
-			altPort := config.AltHTTPPort
-			if altPort == "" {
-				altPort = DefaultHTTPAlternatePort
+			useHTTPPort = config.AltHTTPPort
+			if useHTTPPort == "" {
+				useHTTPPort = DefaultHTTPAlternatePort
 			}
-			c.SetHTTPAddress(net.JoinHostPort(config.ListenHost, altPort))
 		}
 
 		// See if TLS challenge needs to be handled by our own facilities
 		if caddy.HasListenerWithAddress(net.JoinHostPort(config.ListenHost, TLSSNIChallengePort)) {
 			c.SetChallengeProvider(acme.TLSSNI01, tlsSniSolver{})
+		}
+
+		// Always respect user's bind preferences by using config.ListenHost
+		err := c.SetHTTPAddress(net.JoinHostPort(config.ListenHost, useHTTPPort))
+		if err != nil {
+			return nil, err
+		}
+		err = c.SetTLSAddress(net.JoinHostPort(config.ListenHost, ""))
+		if err != nil {
+			return nil, err
 		}
 	} else {
 		// Otherwise, DNS challenge it is
@@ -124,8 +137,8 @@ var newACMEClient = func(config *Config, allowPrompts bool) (*ACMEClient, error)
 			return nil, errors.New("unknown DNS provider by name '" + config.DNSProvider + "'")
 		}
 
-		// we could pass credentials to create the provider, but for now
-		// we just let the solver package get them from the environment
+		// We could pass credentials to create the provider, but for now
+		// just let the solver package get them from the environment
 		prov, err := provFn()
 		if err != nil {
 			return nil, err
@@ -277,7 +290,12 @@ func (c *ACMEClient) Revoke(name string) error {
 		return err
 	}
 
-	if !storage.SiteExists(name) {
+	siteExists, err := storage.SiteExists(name)
+	if err != nil {
+		return err
+	}
+
+	if !siteExists {
 		return errors.New("no certificate and key for " + name)
 	}
 

@@ -129,6 +129,7 @@ func RenewManagedCertificates(allowPrompts bool) (err error) {
 
 	// Apply changes to the cache
 	for _, cert := range renewed {
+		// TODO: Don't do these until we have valid OCSP for the new cert
 		if cert.Names[len(cert.Names)-1] == "" {
 			// Special case: This is the default certificate. We must
 			// flush it out of the cache so that we no longer point to
@@ -247,7 +248,7 @@ func DeleteOldStapleFiles() {
 	}
 	for _, file := range files {
 		if file.IsDir() {
-			// wierd, what's a folder doing inside the OCSP cache?
+			// weird, what's a folder doing inside the OCSP cache?
 			continue
 		}
 		stapleFile := filepath.Join(ocspFolder, file.Name())

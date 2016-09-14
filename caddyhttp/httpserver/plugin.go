@@ -6,6 +6,7 @@ import (
 	"log"
 	"net"
 	"net/url"
+	"os"
 	"strings"
 	"time"
 
@@ -25,7 +26,7 @@ func init() {
 	flag.BoolVar(&QUIC, "quic", false, "Use experimental QUIC")
 
 	caddy.RegisterServerType(serverType, caddy.ServerType{
-		Directives: directives,
+		Directives: func() []string { return directives },
 		DefaultInput: func() caddy.Input {
 			if Port == DefaultPort && Host != "" {
 				// by leaving the port blank in this case we give auto HTTPS
@@ -326,14 +327,71 @@ func standardizeAddress(str string) (Address, error) {
 	return Address{Original: input, Scheme: u.Scheme, Host: host, Port: port, Path: u.Path}, err
 }
 
+// RegisterDevDirective splices name into the list of directives
+// immediately before another directive. This function is ONLY
+// for plugin development purposes! NEVER use it for a plugin
+// that you are not currently building. If before is empty,
+// the directive will be appended to the end of the list.
+//
+// It is imperative that directives execute in the proper
+// order, and hard-coding the list of directives guarantees
+// a correct, absolute order every time. This function is
+// convenient when developing a plugin, but it does not
+// guarantee absolute ordering. Multiple plugins registering
+// directives with this function will lead to non-
+// deterministic builds and buggy software.
+//
+// Directive names must be lower-cased and unique. Any errors
+// here are fatal, and even successful calls print a message
+// to stdout as a reminder to use it only in development.
+func RegisterDevDirective(name, before string) {
+	if name == "" {
+		fmt.Println("[FATAL] Cannot register empty directive name")
+		os.Exit(1)
+	}
+	if strings.ToLower(name) != name {
+		fmt.Printf("[FATAL] %s: directive name must be lowercase\n", name)
+		os.Exit(1)
+	}
+	for _, dir := range directives {
+		if dir == name {
+			fmt.Printf("[FATAL] %s: directive name already exists\n", name)
+			os.Exit(1)
+		}
+	}
+	if before == "" {
+		directives = append(directives, name)
+	} else {
+		var found bool
+		for i, dir := range directives {
+			if dir == before {
+				directives = append(directives[:i], append([]string{name}, directives[i:]...)...)
+				found = true
+				break
+			}
+		}
+		if !found {
+			fmt.Printf("[FATAL] %s: directive not found\n", before)
+			os.Exit(1)
+		}
+	}
+	msg := fmt.Sprintf("Registered directive '%s' ", name)
+	if before == "" {
+		msg += "at end of list"
+	} else {
+		msg += fmt.Sprintf("before '%s'", before)
+	}
+	fmt.Printf("[DEV NOTICE] %s\n", msg)
+}
+
 // directives is the list of all directives known to exist for the
 // http server type, including non-standard (3rd-party) directives.
 // The ordering of this list is important.
 var directives = []string{
 	// primitive actions that set up the fundamental vitals of each config
 	"root",
-	"tls",
 	"bind",
+	"tls",
 
 	// services/utilities, or other directives that don't necessarily inject handlers
 	"startup",
@@ -354,6 +412,7 @@ var directives = []string{
 	"search",    // github.com/pedronasser/caddy-search
 	"header",
 	"redir",
+	"status",
 	"cors", // github.com/captncraig/cors/caddy
 	"mime",
 	"basicauth",
@@ -373,6 +432,7 @@ var directives = []string{
 	"hugo",        // github.com/hacdias/caddy-hugo
 	"mailout",     // github.com/SchumacherFM/mailout
 	"prometheus",  // github.com/miekg/caddy-prometheus
+	"awslambda",   // github.com/coopernurse/caddy-awslambda
 }
 
 const (
