@@ -179,6 +179,18 @@ func TestSetupParseWithWrongOptionalParams(t *testing.T) {
 	if err == nil {
 		t.Errorf("Expected errors, but no error returned")
 	}
+
+	// Test curves wrong params
+	params = `tls {
+			curves ab123, cd456, ef789
+		}`
+	cfg = new(Config)
+	RegisterConfigGetter("", func(c *caddy.Controller) *Config { return cfg })
+	c = caddy.NewTestController("", params)
+	err = setupTLS(c)
+	if err == nil {
+		t.Errorf("Expected errors, but no error returned")
+	}
 }
 
 func TestSetupParseWithClientAuth(t *testing.T) {
@@ -266,6 +278,33 @@ func TestSetupParseWithKeyType(t *testing.T) {
 
 	if cfg.KeyType != acme.EC384 {
 		t.Errorf("Expected 'P384' as KeyType, got %#v", cfg.KeyType)
+	}
+}
+
+func TestSetupParseWithCurves(t *testing.T) {
+	params := `tls {
+            curves p256 p384 p521
+        }`
+	cfg := new(Config)
+	RegisterConfigGetter("", func(c *caddy.Controller) *Config { return cfg })
+	c := caddy.NewTestController("", params)
+
+	err := setupTLS(c)
+	if err != nil {
+		t.Errorf("Expected no errors, got: %v", err)
+	}
+
+	if len(cfg.CurvePreferences) != 3 {
+		t.Errorf("Expected 3 curves, got %v", len(cfg.CurvePreferences))
+	}
+
+	expectedCurves := []tls.CurveID{tls.CurveP256, tls.CurveP384, tls.CurveP521}
+
+	// Ensure ordering is correct
+	for i, actual := range cfg.CurvePreferences {
+		if actual != expectedCurves[i] {
+			t.Errorf("Expected curve in position %d to be %v, got %v", i, expectedCurves[i], actual)
+		}
 	}
 }
 
